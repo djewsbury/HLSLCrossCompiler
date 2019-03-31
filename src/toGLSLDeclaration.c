@@ -866,7 +866,8 @@ void AddUserOutput(HLSLCrossCompilerContext* psContext, const Declaration* psDec
     Shader* psShader = psContext->psShader;
 
     const char* Precision = "";
-    const char* type = "vec";
+    const char* vectorType = "vec";
+	const char* singleType = "float";
 
     const Operand* psOperand = &psDecl->asOperands[0];
     InOutSignature* psSignature = NULL;
@@ -883,12 +884,14 @@ void AddUserOutput(HLSLCrossCompilerContext* psContext, const Declaration* psDec
     {
         case INOUT_COMPONENT_UINT32:
         {
-            type = "uvec";
+            vectorType = "uvec";
+			singleType = "uint";
             break;
         }
         case INOUT_COMPONENT_SINT32:
         {
-            type = "ivec";
+            vectorType = "ivec";
+			singleType = "int";
             break;
         }
         case INOUT_COMPONENT_FLOAT32:
@@ -992,7 +995,7 @@ void AddUserOutput(HLSLCrossCompilerContext* psContext, const Declaration* psDec
                                 }
                             }
 
-							bformata(glsl, "out %s %s4 %s;\n", Precision, type, OutputName);
+							bformata(glsl, "out %s %s4 %s;\n", Precision, vectorType, OutputName);
 							if(stream)
 							{
 								bformata(glsl, "#define Output%d_S%d %s\n", psDecl->asOperands[0].ui32RegisterNumber, stream, OutputName);
@@ -1049,11 +1052,17 @@ void AddUserOutput(HLSLCrossCompilerContext* psContext, const Declaration* psDec
 
 				if(InOutSupported(psContext->psShader->eTargetLanguage))
 				{
-					bformata(glsl, "%s out %s %s%d %s;\n", Interpolation, Precision, type, iNumComponents, OutputName);
+					if (iNumComponents != 1)
+						bformata(glsl, "%s out %s %s%d %s;\n", Interpolation, Precision, vectorType, iNumComponents, OutputName);
+					else
+						bformata(glsl, "%s out %s %s %s;\n", Interpolation, Precision, singleType, OutputName);
 				}
 				else
 				{
-					bformata(glsl, "%s varying %s %s%d %s;\n", Interpolation, Precision, type, iNumComponents, OutputName);
+					if (iNumComponents != 1)
+						bformata(glsl, "%s varying %s %s%d %s;\n", Interpolation, Precision, vectorType, iNumComponents, OutputName);
+					else
+						bformata(glsl, "%s varying %s %s %s;\n", Interpolation, Precision, singleType, OutputName);
 				}
 
                 // We're going to define a special temporary vec4 for this output index.
@@ -1061,7 +1070,7 @@ void AddUserOutput(HLSLCrossCompilerContext* psContext, const Declaration* psDec
                 // shader fixup section.
                 // Note that there may be issues if the types of the overlapping outputs are not the same
                 // (ie, some are float, some are int)
-                bformata(glsl, "%s4 Output%d;\n", type, psDecl->asOperands[0].ui32RegisterNumber);
+                bformata(glsl, "%s4 Output%d;\n", vectorType, psDecl->asOperands[0].ui32RegisterNumber);
                 WriteOutputFixup(psContext, psOperand, OutputName);
 				break;
 			}
@@ -1069,13 +1078,53 @@ void AddUserOutput(HLSLCrossCompilerContext* psContext, const Declaration* psDec
 			{
 				int stream = 0;
 				const char* OutputName = GetDeclaredOutputName(psContext, GEOMETRY_SHADER, psOperand, &stream);
+				int highestComponent = MSBBit(psDecl->asOperands[0].ui32CompMask);      // (zero based bit indexes)
+                int lowestComponent = LSBBit(psDecl->asOperands[0].ui32CompMask);
+                int iNumComponents = highestComponent - lowestComponent + 1;
 
 				if (HaveInOutLocationQualifier(psContext->psShader->eTargetLanguage, psContext->psShader->extensions, psContext->flags))
                 {
-                    bformata(glsl, "layout(location = %d) ", psDecl->asOperands[0].ui32RegisterNumber);
+					int bindOverride = 0;
+					if (psContext->pEvaluateBindingFn) {
+						InOutSignature* psOut;
+						int foundOutput = GetOutputSignatureFromRegister(
+							psContext->currentPhase,
+							psOperand->ui32RegisterNumber,
+							psOperand->ui32CompMask,
+							psContext->psShader->ui32CurrentVertexOutputStream,
+							&psContext->psShader->sInfo,
+							&psOut);
+
+						GLSLResourceBinding binding;
+						binding._locationIndex = ~0u;
+						binding._bindingIndex = ~0u;
+						binding._setIndex = ~0u;
+						binding._flags = 0;
+
+						bstring outputName = bformat("%s%d", psOut->SemanticName, psOut->ui32SemanticIndex);
+						char* t = bstr2cstr(outputName, '\0');
+						uint32_t bindingAttempt =
+							(*psContext->pEvaluateBindingFn)(
+								psContext->pEvaluateBindingData,
+								&binding, 
+								NULL, NULL, t,
+								psOperand->ui32RegisterNumber, GEOMETRY_SHADER);
+						bcstrfree(t);
+
+						if (bindingAttempt && (binding._flags & GLSL_BINDING_TYPE_TRANSFORMFEEDBACK)) {
+							bformata(glsl, "layout(xfb_buffer = %d, xfb_offset = %d, location= %d) ", binding._locationIndex, binding._bindingIndex, psDecl->asOperands[0].ui32RegisterNumber);
+							bindOverride = 1;
+						}
+					}
+
+					if (!bindOverride)
+						bformata(glsl, "layout(location = %d) ", psDecl->asOperands[0].ui32RegisterNumber);
                 }
 
-				bformata(glsl, "out %s4 %s;\n", type, OutputName);
+				if (iNumComponents != 1)
+					bformata(glsl, "out %s %s%d %s;\n", Precision, vectorType, iNumComponents, OutputName);
+				else
+					bformata(glsl, "out %s %s %s;\n", Precision, singleType, OutputName);
 				if(stream)
 				{
 					bformata(glsl, "#define Output%d_S%d %s\n", psDecl->asOperands[0].ui32RegisterNumber, stream, OutputName);
@@ -1095,7 +1144,7 @@ void AddUserOutput(HLSLCrossCompilerContext* psContext, const Declaration* psDec
 
 				if(psContext->currentPhase == HS_JOIN_PHASE)
 				{
-					bformata(glsl, "out patch %s4 %s[];\n", type, OutputName);
+					bformata(glsl, "out patch %s4 %s[];\n", vectorType, OutputName);
 				}
 				else
 				{
@@ -1104,7 +1153,7 @@ void AddUserOutput(HLSLCrossCompilerContext* psContext, const Declaration* psDec
 						bformata(glsl, "layout(location = %d) ", psDecl->asOperands[0].ui32RegisterNumber);
 					}
 
-					bformata(glsl, "out %s4 %s[];\n", type, OutputName);
+					bformata(glsl, "out %s4 %s[];\n", vectorType, OutputName);
 				}
 				bformata(glsl, "#define Output%d %s[gl_InvocationID]\n", psDecl->asOperands[0].ui32RegisterNumber, OutputName);
 				break;
@@ -1117,7 +1166,7 @@ void AddUserOutput(HLSLCrossCompilerContext* psContext, const Declaration* psDec
                 {
                     bformata(glsl, "layout(location = %d) ", psDecl->asOperands[0].ui32RegisterNumber);
                 }
-				bformata(glsl, "out %s4 %s;\n", type, OutputName);
+				bformata(glsl, "out %s4 %s;\n", vectorType, OutputName);
 				bformata(glsl, "#define Output%d %s\n", psDecl->asOperands[0].ui32RegisterNumber, OutputName);
 				break;
 			}
@@ -1182,7 +1231,10 @@ void AddUserOutput(HLSLCrossCompilerContext* psContext, const Declaration* psDec
                 }
 			}
 
-			bformata(glsl, "%s out %s %s%d %s;\n", Interpolation, Precision, type, iNumComponents, OutputName);
+			if (iNumComponents != 1)
+				bformata(glsl, "%s out %s %s%d %s;\n", Interpolation, Precision, vectorType, iNumComponents, OutputName);
+			else
+				bformata(glsl, "%s out %s %s %s;\n", Interpolation, Precision, singleType, OutputName);
 
 			WriteOutputFixup(psContext, psOperand, OutputName);
 		}
@@ -1228,11 +1280,13 @@ void WriteUniformLayout(
             (*psContext->pEvaluateBindingFn)(
                 psContext->pEvaluateBindingData,
                 &binding, 
-                srcResBinding, srcCBBinding, 
+                srcResBinding, srcCBBinding, NULL,
                 ui32BindingPoint, shaderStage);
         if (bindingAttempt) {
             bcatcstr(glsl, "layout(");
             int needComma = 0;
+
+			ASSERT(!(binding._flags & GLSL_BINDING_TYPE_TRANSFORMFEEDBACK));		// only meaningful on vertex or geometry outputs
 
             if (binding._flags & GLSL_BINDING_TYPE_PUSHCONSTANTS) {
                 bcatcstr(glsl, "push_constant");
