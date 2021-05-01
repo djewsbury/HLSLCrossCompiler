@@ -15,6 +15,8 @@
 
 #ifndef EXCLUDE_PSTDINT
 #include "pstdint.h"
+#else
+#include <stdint.h>
 #endif
 
 typedef enum
