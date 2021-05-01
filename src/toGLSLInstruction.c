@@ -786,7 +786,7 @@ static void TranslateTexelFetch(HLSLCrossCompilerContext* psContext,
 	}
 	}
 
-	AddSwizzleUsingElementCount(psContext, destCount);
+	TranslateOperandSwizzleWithMask(psContext, &psInst->asOperands[2], GetOperandWriteMask(&psInst->asOperands[0]));		// DavidJ -- copying the swizzle behaviour used in OPCODE_LOD
 	AddAssignPrologue(psContext, numParenthesis);
 }
 
@@ -862,7 +862,7 @@ static void TranslateTexelFetchOffset(HLSLCrossCompilerContext* psContext,
 	}
 	}
 
-	AddSwizzleUsingElementCount(psContext, destCount);
+	TranslateOperandSwizzleWithMask(psContext, &psInst->asOperands[2], GetOperandWriteMask(&psInst->asOperands[0]));		// DavidJ -- copying the swizzle behaviour used in OPCODE_LOD
 	AddAssignPrologue(psContext, numParenthesis);
 }
 
