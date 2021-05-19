@@ -1122,12 +1122,18 @@ static void TranslateTextureSample(HLSLCrossCompilerContext* psContext, Instruct
 	}
 	case RESOURCE_DIMENSION_TEXTURECUBE:
 	{
-		depthCmpCoordType = "vec3";
+		depthCmpCoordType = "vec4";
 		gradSwizzle = ".xyz";
 		ui32NumOffsets = 3;
 		if (!iHaveOverloadedTexFuncs)
 		{
 			funcName = "textureCube";
+		}
+		if (ui32Flags & TEXSMP_FLAG_DEPTHCOMPARE)
+		{
+			// There is not an override for textureLod() for samplerCubeShadow
+			// (despite other similar overrides being present)
+			ui32Flags &= ~(TEXSMP_FLAG_LOD | TEXSMP_FLAG_FIRSTLOD);
 		}
 		break;
 	}
